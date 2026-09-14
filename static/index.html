@@ -21,7 +21,7 @@
         <div class="container">
             <h3>Convert LaTeX math equations to PNG/JPG/SVG images</h3>
             <p>LaTeX2Image allows LaTeX math equations to be exported directly to multiple image formats, and saved for use in other documents.<br>
-                Enter in a LaTeX math equation and click &ldquo;Convert&rdquo;. For a sample expression, click &ldquo;Show Example&rdquo;. <a href="https://github.com/joeraut/latex2image-web" target="_blank">Source code available on GitHub</a>.
+                Enter in a LaTeX math equation and click &ldquo;Convert&rdquo;. For a sample expression, click &ldquo;Show Example&rdquo;.
             </p>
         </div>
         <div class="container">
@@ -82,11 +82,84 @@
         </div>
         <br>
         <div class="container initiallyHidden" id="result">
-            <div class="card initiallyHidden" id="resultCard">
+            <div class="card shadow-sm initiallyHidden" id="resultCard">
+                <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0 font-weight-bold">Rendered LaTeX</h5>
+                    <span class="badge badge-primary px-2 py-1" id="formatBadge">PNG</span>
+                </div>
                 <div class="card-body">
-                    <img id="resultImage" />
-                    <br><br>
-                    <a href="#" class="btn btn-primary" role="button" id="downloadButton" target="_blank" download>Save Image</a>
+                    <!-- Rendered LaTeX Preview Box -->
+                    <div class="rendered-preview-box mb-3 text-center p-4">
+                        <img id="resultImage" class="img-fluid" alt="Rendered LaTeX Equation" />
+                    </div>
+
+                    <div class="mb-4">
+                        <a href="#" class="btn btn-success font-weight-bold mr-2" role="button" id="downloadButton" download>
+                            Download Image
+                        </a>
+                        <a href="#" class="btn btn-outline-secondary" role="button" id="openNewTabButton" target="_blank">
+                            Open Image in New Tab
+                        </a>
+                    </div>
+
+                    <!-- Copyable Code / URL Text Boxes -->
+                    <div class="card border">
+                        <div class="card-header p-2 bg-light">
+                            <ul class="nav nav-tabs card-header-tabs" id="exportTabs" role="tablist">
+                                <li class="nav-item">
+                                    <a class="nav-link active" id="url-tab" data-toggle="tab" href="#tabUrl" role="tab">Image URL</a>
+                                </li>
+                                <li class="nav-item">
+                                    <a class="nav-link" id="svg-tab" data-toggle="tab" href="#tabSvg" role="tab">Raw SVG Code</a>
+                                </li>
+                                <li class="nav-item">
+                                    <a class="nav-link" id="md-tab" data-toggle="tab" href="#tabMd" role="tab">Markdown Embed</a>
+                                </li>
+                            </ul>
+                        </div>
+                        <div class="card-body p-3">
+                            <div class="tab-content" id="exportTabsContent">
+                                <!-- Image URL Tab -->
+                                <div class="tab-pane fade show active" id="tabUrl" role="tabpanel">
+                                    <label class="small text-muted mb-1 font-weight-bold">Direct Image URL</label>
+                                    <div class="input-group">
+                                        <input type="text" class="form-control font-monospace" id="imageUrlInput" readonly>
+                                        <div class="input-group-append">
+                                            <button class="btn btn-outline-primary copy-btn" type="button" data-target="#imageUrlInput">
+                                                Copy URL
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- SVG Code Tab -->
+                                <div class="tab-pane fade" id="tabSvg" role="tabpanel">
+                                    <label class="small text-muted mb-1 font-weight-bold">Raw SVG Vector Code</label>
+                                    <div class="input-group">
+                                        <textarea class="form-control font-monospace" id="svgCodeTextarea" rows="4" readonly></textarea>
+                                        <div class="input-group-append">
+                                            <button class="btn btn-outline-primary copy-btn align-self-start h-100" type="button" data-target="#svgCodeTextarea">
+                                                Copy SVG
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Markdown Tab -->
+                                <div class="tab-pane fade" id="tabMd" role="tabpanel">
+                                    <label class="small text-muted mb-1 font-weight-bold">Markdown Image Embed</label>
+                                    <div class="input-group">
+                                        <input type="text" class="form-control font-monospace" id="markdownInput" readonly>
+                                        <div class="input-group-append">
+                                            <button class="btn btn-outline-primary copy-btn" type="button" data-target="#markdownInput">
+                                                Copy Markdown
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="alert alert-danger initiallyHidden" id="errorAlert"></div>
@@ -95,8 +168,9 @@
         <div class="container">
             <hr>
             <footer>
-                <p>By <a href="https://joeraut.com" target="_blank">joeraut.com</a> | <a href="https://github.com/joeraut/latex2image-web" target="_blank">source code</a></p>
+                <p>&copy; LaTeX to Image Converter</p>
             </footer>
         </div>
+        <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.bundle.min.js"></script>
     </body>
 </html>

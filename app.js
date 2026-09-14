@@ -1,59 +1,68 @@
 const fs = require('fs');
 const fsPromises = fs.promises;
-const shell = require('shelljs');
+const path = require('path');
 const express = require('express');
-const promiseRouter = require('express-promise-router');
-const queue = require('express-queue');
 const sharp = require('sharp');
-const Promise = require('bluebird');
+
+// MathJax components for pure Node.js LaTeX rendering
+const { mathjax } = require('mathjax-full/js/mathjax.js');
+const { TeX } = require('mathjax-full/js/input/tex.js');
+const { SVG } = require('mathjax-full/js/output/svg.js');
+const { liteAdaptor } = require('mathjax-full/js/adaptors/liteAdaptor.js');
+const { RegisterHTMLHandler } = require('mathjax-full/js/handlers/html.js');
+const { AllPackages } = require('mathjax-full/js/input/tex/AllPackages.js');
+
+// Initialize MathJax adaptor & HTML handler
+const adaptor = liteAdaptor();
+RegisterHTMLHandler(adaptor);
+
+// Configure TeX input with full AMS, physics, symbols, etc.
+const tex = new TeX({
+  packages: AllPackages,
+  inlineMath: [['$', '$'], ['\\(', '\\)']],
+  displayMath: [['$$', '$$'], ['\\[', '\\]']]
+});
+const svgOutput = new SVG({ fontCache: 'local' });
+const htmlDoc = mathjax.document('', { InputJax: tex, OutputJax: svgOutput });
 
 const port = 3001;
 
 const staticDir = 'static';
-const tempDir = 'temp';
 const outputDir = 'output';
 const httpOutputDir = 'output';
 
 // Checklist of valid formats from the frontend, to verify form values are correct
 const validFormats = ['SVG', 'PNG', 'JPG'];
 
-// Maps scales received from the frontend into values appropriate for LaTeX
+// Maps scales received from the frontend into numeric multipliers
 const scaleMap = {
-  '10%': '0.1',
-  '25%': '0.25',
-  '50%': '0.5',
-  '75%': '0.75',
-  '100%': '1.0',
-  '125%': '1.25',
-  '150%': '1.5',
-  '200%': '2.0',
-  '500%': '5.0',
-  '1000%': '10.0'
+  '10%': 0.1,
+  '25%': 0.25,
+  '50%': 0.5,
+  '75%': 0.75,
+  '100%': 1.0,
+  '125%': 1.25,
+  '150%': 1.5,
+  '200%': 2.0,
+  '500%': 5.0,
+  '1000%': 10.0
 };
 
-// Unsupported commands we will error on
-const unsupportedCommands = ['\\usepackage', '\\input', '\\include', '\\write18', '\\immediate', '\\verbatiminput'];
+// Unsupported security-sensitive commands
+const unsupportedCommands = ['\\input', '\\include', '\\write18', '\\immediate', '\\verbatiminput'];
 
 const app = express();
 
-const bodyParser = require('body-parser');
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Allow static html files and output files to be accessible
 app.use('/', express.static(staticDir));
 app.use('/output', express.static(outputDir));
 
-const conversionRouter = promiseRouter();
-app.use(conversionRouter);
-
-// Queue requests to ensure that only one is processed at a time, preventing
-// multiple concurrent Docker containers from exhausting system resources
-conversionRouter.use(queue({ activeLimit: 1, queuedLimit: -1 }));
-
 // Conversion request endpoint
-conversionRouter.post('/convert', async (req, res) => {
-  const id = generateID(); // Generate a unique ID for this request
+app.post('/convert', async (req, res) => {
+  const id = generateID();
 
   try {
     if (!req.body.latexInput) {
@@ -61,7 +70,7 @@ conversionRouter.post('/convert', async (req, res) => {
       return;
     }
 
-    if (!scaleMap[req.body.outputScale]) {
+    if (scaleMap[req.body.outputScale] === undefined) {
       res.end(JSON.stringify({ error: 'Invalid scale.' }));
       return;
     }
@@ -81,48 +90,47 @@ conversionRouter.post('/convert', async (req, res) => {
     const fileFormat = req.body.outputFormat.toLowerCase();
     const outputScale = scaleMap[req.body.outputScale];
 
-    // Generate and write the .tex file
-    await fsPromises.mkdir(`${tempDir}/${id}`);
-    await fsPromises.writeFile(`${tempDir}/${id}/equation.tex`, getLatexTemplate(equation));
+    // Render LaTeX to SVG string in pure Node.js
+    const svgString = convertLatexToSvg(equation, outputScale);
 
-    // Run the LaTeX compiler and generate a .svg file
-    await execAsync(getDockerCommand(id, outputScale));
+    const outputFileName = path.join(outputDir, `img-${id}.${fileFormat}`);
 
-    const inputSvgFileName = `${tempDir}/${id}/equation.svg`;
-    const outputFileName = `${outputDir}/img-${id}.${fileFormat}`;
-
-    // Return the SVG image, no further processing required
+    // Return the SVG image
     if (fileFormat === 'svg') {
-      await fsPromises.copyFile(inputSvgFileName, outputFileName);
+      await fsPromises.writeFile(outputFileName, svgString, 'utf8');
 
-    // Convert to PNG
+      // Convert to PNG
     } else if (fileFormat === 'png') {
-      await sharp(inputSvgFileName, { density: 96 })
-        .toFile(outputFileName); // Sharp's PNG type is implicitly determined via the output file extension
+      const density = Math.round(96 * outputScale);
+      await sharp(Buffer.from(svgString), { density })
+        .png()
+        .toFile(outputFileName);
 
-    // Convert to JPG
+      // Convert to JPG (white background)
     } else {
-      await sharp(inputSvgFileName, { density: 96 })
-        .flatten({ background: { r: 255, g: 255, b: 255 } }) // as JPG is not transparent, use a white background
+      const density = Math.round(96 * outputScale);
+      await sharp(Buffer.from(svgString), { density })
+        .flatten({ background: { r: 255, g: 255, b: 255 } })
         .jpeg({ quality: 95 })
         .toFile(outputFileName);
     }
 
-    await cleanupTempFilesAsync(id);
-    res.end(JSON.stringify({ imageURL: `${httpOutputDir}/img-${id}.${fileFormat}` }));
+    res.end(JSON.stringify({
+      imageURL: `${httpOutputDir}/img-${id}.${fileFormat}`,
+      format: fileFormat,
+      svgContent: svgString
+    }));
 
-  // An exception occurred somewhere, return an error
   } catch (e) {
-    console.error(e);
-    await cleanupTempFilesAsync(id);
-    res.end(JSON.stringify({ error: 'Error converting LaTeX to image. Please ensure the input is valid.' }));
+    console.error('Conversion error:', e.message);
+    const clientError = e.message.startsWith('LaTeX Error:')
+      ? e.message
+      : 'Error converting LaTeX to image. Please ensure the input is valid.';
+    res.end(JSON.stringify({ error: clientError }));
   }
 });
 
-// Create temp and output directories if they don't exist yet
-if (!fs.existsSync(tempDir)) {
-  fs.mkdirSync(tempDir);
-}
+// Create output directory if it doesn't exist yet
 if (!fs.existsSync(outputDir)) {
   fs.mkdirSync(outputDir);
 }
@@ -132,62 +140,41 @@ app.listen(port, () => console.log(`Latex2Image listening at http://localhost:${
 
 //// Helper functions
 
-// Get the LaTeX document template for the requested equation
-function getLatexTemplate(equation) {
-  return `
-    \\documentclass[12pt]{article}
-    \\usepackage{amsmath}
-    \\usepackage{amssymb}
-    \\usepackage{amsfonts}
-    \\usepackage{xcolor}
-    \\usepackage{siunitx}
-    \\usepackage[utf8]{inputenc}
-    \\thispagestyle{empty}
-    \\begin{document}
-    ${equation}
-    \\end{document}`;
-}
+// Converts LaTeX equation into clean SVG string using MathJax
+function convertLatexToSvg(latexInput, scale) {
+  let eq = latexInput.trim();
 
-// Get the final command responsible for launching the Docker container and generating a svg file
-function getDockerCommand(id, output_scale) {
-  // Commands to run within the container
-  const containerCmds = `
-    # Prevent LaTeX from reading/writing files in parent directories
-    echo 'openout_any = p\nopenin_any = p' > /tmp/texmf.cnf
-    export TEXMFCNF='/tmp:'
+  // Strip document-level wrappers if passed by the user
+  eq = eq.replace(/\\documentclass(?:\[[^\]]*\])?\{[^}]+\}/g, '');
+  eq = eq.replace(/\\usepackage(?:\[[^\]]*\])?\{[^}]+\}/g, '');
+  eq = eq.replace(/\\thispagestyle\{[^}]+\}/g, '');
+  eq = eq.replace(/\\begin\{document\}/g, '');
+  eq = eq.replace(/\\end\{document\}/g, '');
+  eq = eq.trim();
 
-    # Compile .tex file to .dvi file. Timeout kills it after 5 seconds if held up
-    timeout 5 latex -no-shell-escape -interaction=nonstopmode -halt-on-error equation.tex
+  const node = htmlDoc.convert(eq, { display: true });
 
-    # Convert .dvi to .svg file. Timeout kills it after 5 seconds if held up
-    timeout 5 dvisvgm --no-fonts --scale=${output_scale} --exact equation.dvi`;
+  // Check for LaTeX syntax errors
+  const merror = adaptor.tags(node, 'g').find(g => adaptor.getAttribute(g, 'data-mml-node') === 'merror');
+  if (merror) {
+    const errorMsg = adaptor.getAttribute(merror, 'data-mjx-error') || 'Syntax error in LaTeX equation';
+    throw new Error(`LaTeX Error: ${errorMsg}`);
+  }
 
-  // Start the container in the appropriate directory and run commands within it.
-  // Files in this directory will be accessible under /data within the container.
-  return `
-    cd ${tempDir}/${id}
-    docker run --rm -i --user="$(id -u):$(id -g)" \
-        --net=none -v "$PWD":/data "blang/latex:ubuntu" \
-        /bin/bash -c "${containerCmds}"`;
-}
+  let svgString = adaptor.innerHTML(node);
 
-// Deletes temporary files created during a conversion request
-function cleanupTempFilesAsync(id) {
-  return fsPromises.rmdir(`${tempDir}/${id}`, { recursive: true });
-}
+  // Scale SVG dimensions if scale != 1.0
+  if (scale !== 1.0) {
+    svgString = svgString.replace(
+      /width="([0-9.]+)ex"\s+height="([0-9.]+)ex"/,
+      (match, w, h) => `width="${(parseFloat(w) * scale).toFixed(3)}ex" height="${(parseFloat(h) * scale).toFixed(3)}ex"`
+    );
+  }
 
-// Execute a shell command
-function execAsync(cmd, opts = {}) {
-  return new Promise((resolve, reject) => {
-    shell.exec(cmd, opts, (code, stdout, stderr) => {
-      if (code != 0) reject(new Error(stderr));
-      else resolve(stdout);
-    });
-  });
+  return svgString;
 }
 
 function generateID() {
-  // Generate a random 16-char hexadecimal ID
   let output = '';
   for (let i = 0; i < 16; i++) {
     output += '0123456789abcdef'.charAt(Math.floor(Math.random() * 16));
